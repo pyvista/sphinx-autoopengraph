@@ -10,6 +10,7 @@ First image, only here for context.
 Second image, which is the real subject of this page.
 
 .. image:: https://docs.example.org/_static/two.png
+   :alt: A hand-picked description of the second image
 
 Third image, unused.
 

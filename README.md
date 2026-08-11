@@ -156,6 +156,18 @@ image with Sphinx-Gallery's own comment instead:
 # sphinx_gallery_thumbnail_number = 2
 ```
 
+### Image metadata
+
+When the selected image is one this build rendered (as opposed to, say, an
+externally hosted `.. image::`, or an explicit `:og:image:` override),
+`og:image:width`, `og:image:height` and `og:image:type` are filled in from the
+file itself. Consumers that lay out a preview before fetching the image --
+LinkedIn among them -- use these to avoid guessing its aspect ratio.
+
+`og:image:alt` is taken from the selected image's own `alt` text, when it has
+one, in place of the generic site name or page title `sphinxext-opengraph`
+would otherwise fall back to.
+
 ## Preview descriptions
 
 Each page is described by its leading paragraphs of real prose, up to

@@ -13,7 +13,9 @@ Sphinx-Gallery renders.
 
 The result is written to the page's ``og:image`` field before ``sphinxext-opengraph``
 renders its tags, so its own default (``ogp_image``) is only ever used as a fallback
-for pages with no image of their own.
+for pages with no image of their own. When the selected image is one this build
+rendered, ``og:image:width``/``height``/``type`` are added from the file itself, and
+``og:image:alt`` from the image's own ``alt`` text if it has one.
 
 """
 
@@ -21,6 +23,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import posixpath
+import struct
 from typing import TYPE_CHECKING
 from typing import Any
 import urllib.parse
@@ -142,15 +145,23 @@ def _set_image(
         return
 
     if _is_sphinx_gallery_document(app, pagename):
-        image = _gallery_image(app, pagename, doctree)
+        selected = _gallery_image(app, pagename, doctree)
     else:
-        image = _numbered_image(app, pagename, doctree)
-    if image is not None:
-        fields['og:image'] = image
+        selected = _numbered_image(app, pagename, doctree)
+    if selected is None:
+        return
+
+    url, alt = selected
+    fields['og:image'] = url
+    if alt:
+        fields.setdefault('og:image:alt', alt)
+    _add_image_metadata(app, url, fields)
 
 
-def _numbered_image(app: Sphinx, docname: str, doctree: nodes.document) -> str | None:
-    """Return the URL of the image a page selects by position."""
+def _numbered_image(
+    app: Sphinx, docname: str, doctree: nodes.document
+) -> tuple[str, str | None] | None:
+    """Return the URL and alt text of the image a page selects by position."""
     images = list(_image_nodes(doctree))
     if not images:
         return None
@@ -172,8 +183,15 @@ def _numbered_image(app: Sphinx, docname: str, doctree: nodes.document) -> str |
                 subtype='thumbnail',
             )
         index = 0
+    node = images[index]
     # Sphinx has already rewritten the URI to the image's path relative to this page
-    return _absolute_url(app, docname, images[index]['uri'])
+    return _absolute_url(app, docname, node['uri']), _image_alt(node)
+
+
+def _image_alt(node: nodes.Element) -> str | None:
+    """Return *node*'s ``alt`` text, if it has one worth using."""
+    alt = node.get('alt')
+    return alt.strip() if isinstance(alt, str) and alt.strip() else None
 
 
 def _skips_rendering(config: Config) -> bool:
@@ -188,8 +206,10 @@ def _skips_rendering(config: Config) -> bool:
     )
 
 
-def _gallery_image(app: Sphinx, docname: str, doctree: nodes.document) -> str | None:
-    """Return the URL of the image Sphinx-Gallery uses as an example's thumbnail.
+def _gallery_image(
+    app: Sphinx, docname: str, doctree: nodes.document
+) -> tuple[str, str | None] | None:
+    """Return the URL and alt text of the image Sphinx-Gallery uses as a thumbnail.
 
     The full resolution image is preferred over the gallery's own thumbnail file,
     which is too small to make a good link preview, but it is always the same image
@@ -207,15 +227,18 @@ def _gallery_image(app: Sphinx, docname: str, doctree: nodes.document) -> str | 
         index = number - 1 if number > 0 else number
         if -len(images) <= index < len(images):
             # Sphinx-Gallery copies its images into the output verbatim
-            return _absolute_url(app, docname, _output_image_path(app, images[index]['uri']))
+            node = images[index]
+            url = _absolute_url(app, docname, _output_image_path(app, node['uri']))
+            return url, _image_alt(node)
 
     # ``sphinx_gallery_thumbnail_path`` and failed examples both leave a thumbnail with
-    # no full resolution counterpart on the page
+    # no full resolution counterpart on the page, and no doctree node to take alt text from
     thumbnails = (source.parent / 'images' / 'thumb').glob(f'sphx_glr_{source.stem}_thumb.*')
     thumbnail = next(thumbnails, None)
     if thumbnail is None:
         return None
-    return _absolute_url(app, docname, _output_image_path(app, thumbnail.name))
+    url = _absolute_url(app, docname, _output_image_path(app, thumbnail.name))
+    return url, None
 
 
 def _gallery_thumbnail_selection(source: Path) -> tuple[int, str | None]:
@@ -251,6 +274,71 @@ def _image_nodes(doctree: nodes.document) -> Iterator[nodes.Element]:
 def _output_image_path(app: Sphinx, name: str) -> str:
     """Return the path of an output image, relative to the page being written."""
     return posixpath.join(app.builder.imgpath, posixpath.basename(name))
+
+
+#: Extensions plot-generating extensions actually produce, mapped to their MIME type
+_MIME_TYPES = {
+    '.gif': 'image/gif',
+    '.jpeg': 'image/jpeg',
+    '.jpg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp',
+}
+
+
+def _add_image_metadata(app: Sphinx, url: str, fields: dict[str, str]) -> None:
+    """Add ``og:image:width``/``height``/``type`` for a same-site, readable image.
+
+    Consumers that lay out a preview before fetching the image -- LinkedIn among
+    them -- use these to avoid guessing its aspect ratio. Silently does nothing for
+    an image this build didn't render, such as one from an explicit ``:og:image:``
+    override or an externally hosted ``.. image::``.
+    """
+    path = _local_image_path(app, url)
+    if path is None:
+        return
+    mime = _MIME_TYPES.get(path.suffix.lower())
+    if mime is not None:
+        fields.setdefault('og:image:type', mime)
+    dimensions = _read_dimensions(path)
+    if dimensions is not None:
+        width, height = dimensions
+        fields.setdefault('og:image:width', str(width))
+        fields.setdefault('og:image:height', str(height))
+
+
+def _local_image_path(app: Sphinx, url: str) -> Path | None:
+    """Return the on-disk file *url* was built from, or ``None`` if it isn't one.
+
+    ``app.builder.imgpath`` is relative to whatever page is currently being
+    written, not to the output directory -- ``imagedir`` (always ``_images``,
+    where Sphinx collects every local image site-wide) is the one to resolve
+    against ``app.outdir`` with.
+    """
+    site_url = app.config.ogp_canonical_url or app.config.ogp_site_url
+    if site_url and not url.startswith(site_url):
+        return None
+    basename = posixpath.basename(urllib.parse.urlparse(url).path)
+    if not basename:
+        return None
+    path = Path(app.outdir) / app.builder.imagedir / basename
+    return path if path.is_file() else None
+
+
+def _read_dimensions(path: Path) -> tuple[int, int] | None:
+    """Return an image's ``(width, height)`` in pixels.
+
+    Only handles the formats plot-generating extensions actually produce (PNG,
+    animated GIF); returns ``None`` for anything else rather than adding a
+    dependency to parse it.
+    """
+    with path.open('rb') as file:
+        header = file.read(26)
+    if header[:8] == b'\x89PNG\r\n\x1a\n':
+        return struct.unpack('>II', header[16:24])
+    if header[:6] in (b'GIF87a', b'GIF89a'):
+        return struct.unpack('<HH', header[6:10])
+    return None
 
 
 def _absolute_url(app: Sphinx, docname: str, path: str) -> str:
