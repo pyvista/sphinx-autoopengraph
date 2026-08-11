@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import types
@@ -16,7 +17,10 @@ import pytest
 
 from sphinx_autoopengraph._description import _is_skipped
 from sphinx_autoopengraph._description import _truncate
+from sphinx_autoopengraph._image import _add_image_metadata
 from sphinx_autoopengraph._image import _is_sphinx_gallery_document
+from sphinx_autoopengraph._image import _local_image_path
+from sphinx_autoopengraph._image import _read_dimensions
 
 TINYPAGES_DIR = Path(__file__).parent / 'tinypages'
 
@@ -116,6 +120,39 @@ def test_image_selection_picks_the_chosen_image(tmp_path: Path):
 
     tags = meta_tags(html_dir / 'some_images.html')
     assert tags.get('og:image') == 'https://docs.example.org/_static/two.png'
+
+
+def test_image_alt_uses_the_selected_images_own_alt_text(tmp_path: Path):
+    """The selected image's own ``:alt:`` becomes ``og:image:alt``."""
+    html_dir, returncode, out, err = _build_tinypages(tmp_path)
+    assert returncode == 0, f'sphinx build failed with stdout:\n{out}\nstderr:\n{err}\n'
+
+    tags = meta_tags(html_dir / 'some_images.html')
+    assert tags.get('og:image:alt') == 'A hand-picked description of the second image'
+
+
+def test_externally_hosted_image_has_no_dimensions_or_type(tmp_path: Path):
+    """Dimensions and MIME type are only added for images this build rendered."""
+    html_dir, returncode, out, err = _build_tinypages(tmp_path)
+    assert returncode == 0, f'sphinx build failed with stdout:\n{out}\nstderr:\n{err}\n'
+
+    tags = meta_tags(html_dir / 'some_images.html')
+    assert 'og:image:width' not in tags
+    assert 'og:image:height' not in tags
+    assert 'og:image:type' not in tags
+
+
+def test_locally_rendered_image_has_dimensions_and_type(tmp_path: Path):
+    """A same-build image gets ``og:image:width``/``height``/``type`` added."""
+    html_dir, returncode, out, err = _build_tinypages(tmp_path)
+    assert returncode == 0, f'sphinx build failed with stdout:\n{out}\nstderr:\n{err}\n'
+
+    tags = meta_tags(html_dir / 'gallery' / 'plot_custom.html')
+    assert tags.get('og:image:type') == 'image/png'
+    assert tags.get('og:image:width', '0').isdigit()
+    assert tags.get('og:image:height', '0').isdigit()
+    assert int(tags['og:image:width']) > 0
+    assert int(tags['og:image:height']) > 0
 
 
 def test_pages_with_no_images_keep_the_site_wide_default(tmp_path: Path):
@@ -515,6 +552,88 @@ def test_is_sphinx_gallery_document_accepts_a_bare_gallery_dirs_string(tmp_path:
     )
     assert _is_sphinx_gallery_document(app, 'gallery/plot_default') is True
     assert _is_sphinx_gallery_document(app, 'some_autodocs') is False
+
+
+def test_read_dimensions_handles_png_and_gif(tmp_path: Path):
+    png = tmp_path / 'image.png'
+    png.write_bytes(
+        b'\x89PNG\r\n\x1a\n'
+        + struct.pack('>I', 13)
+        + b'IHDR'
+        + struct.pack('>II', 300, 200)
+        + b'\x08\x02\x00\x00\x00'
+    )
+    assert _read_dimensions(png) == (300, 200)
+
+    gif = tmp_path / 'image.gif'
+    gif.write_bytes(b'GIF89a' + struct.pack('<HH', 150, 100) + b'\x00' * 20)
+    assert _read_dimensions(gif) == (150, 100)
+
+
+def test_read_dimensions_returns_none_for_an_unrecognized_format(tmp_path: Path):
+    other = tmp_path / 'image.svg'
+    other.write_bytes(b'<svg xmlns="http://www.w3.org/2000/svg"></svg>')
+    assert _read_dimensions(other) is None
+
+
+def test_local_image_path_rejects_a_different_site(tmp_path: Path):
+    (tmp_path / 'photo.png').touch()
+    app = types.SimpleNamespace(
+        config=types.SimpleNamespace(
+            ogp_site_url='https://docs.example.org/', ogp_canonical_url=''
+        ),
+        outdir=str(tmp_path),
+        builder=types.SimpleNamespace(imagedir='.'),
+    )
+    assert _local_image_path(app, 'https://elsewhere.example.org/photo.png') is None
+
+
+def test_local_image_path_rejects_a_file_this_build_never_wrote(tmp_path: Path):
+    app = types.SimpleNamespace(
+        config=types.SimpleNamespace(
+            ogp_site_url='https://docs.example.org/', ogp_canonical_url=''
+        ),
+        outdir=str(tmp_path),
+        builder=types.SimpleNamespace(imagedir='.'),
+    )
+    assert _local_image_path(app, 'https://docs.example.org/missing.png') is None
+
+
+def test_local_image_path_finds_a_same_site_file(tmp_path: Path):
+    (tmp_path / 'photo.png').touch()
+    app = types.SimpleNamespace(
+        config=types.SimpleNamespace(
+            ogp_site_url='https://docs.example.org/', ogp_canonical_url=''
+        ),
+        outdir=str(tmp_path),
+        builder=types.SimpleNamespace(imagedir='.'),
+    )
+    assert _local_image_path(app, 'https://docs.example.org/photo.png') == tmp_path / 'photo.png'
+
+
+def test_local_image_path_rejects_a_url_with_no_path(tmp_path: Path):
+    app = types.SimpleNamespace(
+        config=types.SimpleNamespace(
+            ogp_site_url='https://docs.example.org/', ogp_canonical_url=''
+        ),
+        outdir=str(tmp_path),
+        builder=types.SimpleNamespace(imagedir='.'),
+    )
+    assert _local_image_path(app, 'https://docs.example.org/') is None
+
+
+def test_add_image_metadata_skips_an_unrecognized_local_file_type(tmp_path: Path):
+    (tmp_path / 'diagram.svg').write_bytes(b'<svg xmlns="http://www.w3.org/2000/svg"></svg>')
+    app = types.SimpleNamespace(
+        config=types.SimpleNamespace(
+            ogp_site_url='https://docs.example.org/', ogp_canonical_url=''
+        ),
+        outdir=str(tmp_path),
+        builder=types.SimpleNamespace(imagedir='.'),
+    )
+    fields: dict[str, str] = {}
+    _add_image_metadata(app, 'https://docs.example.org/diagram.svg', fields)
+    assert fields == {}
 
 
 @pytest.mark.parametrize(
