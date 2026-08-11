@@ -375,6 +375,43 @@ def test_zero_thumbnail_argument_errors(tmp_path: Path):
     assert 'is one-based, so 0 is not a valid image number' in f'{out}\n{err}'
 
 
+def test_autoopengraph_thumbnail_fires_when_injected_via_insert_input(tmp_path: Path):
+    """A directive still fires when injected by another directive, not written in the source.
+
+    Some directives (matplotlib's and PyVista's own plot directives among them)
+    render by re-inserting a block of their own raw content back into the RST
+    stream, via ``state_machine.insert_input()``, for a second parsing pass --
+    which can make a nested ``.. autoopengraph_thumbnail::`` line fire as a real
+    directive even though it was never present in the page's own source text.
+    ``echo-raw``, registered below purely for this test, reproduces just that
+    mechanism, independent of any real plot directive -- and of whether a
+    future PyVista docstring still uses one explicitly, or relies on numpydoc's
+    automatic wrapping instead.
+    """
+    returncode, out, err, html_dir = _build_minimal(
+        tmp_path,
+        'Nested Directive\n=================\n\n'
+        '.. image:: https://docs.example.org/_static/one.png\n\n'
+        '.. echo-raw::\n\n'
+        '   .. autoopengraph_thumbnail:: 2\n\n'
+        '   .. image:: https://docs.example.org/_static/two.png\n',
+        conf_extra=(
+            'def setup(app):\n'
+            '    from docutils.parsers.rst import Directive\n\n'
+            '    class EchoRaw(Directive):\n'
+            '        has_content = True\n\n'
+            '        def run(self):\n'
+            "            self.state_machine.insert_input(list(self.content), 'echo-raw')\n"
+            '            return []\n\n'
+            "    app.add_directive('echo-raw', EchoRaw)\n"
+        ),
+    )
+    assert returncode == 0, f'sphinx build failed with stdout:\n{out}\nstderr:\n{err}\n'
+    assert meta_tags(html_dir / 'index.html').get('og:image') == (
+        'https://docs.example.org/_static/two.png'
+    )
+
+
 def test_explicit_og_image_field_is_not_overridden(tmp_path: Path):
     returncode, out, err, html_dir = _build_minimal(
         tmp_path,
