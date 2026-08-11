@@ -13,9 +13,11 @@ Sphinx-Gallery renders.
 
 The result is written to the page's ``og:image`` field before ``sphinxext-opengraph``
 renders its tags, so its own default (``ogp_image``) is only ever used as a fallback
-for pages with no image of their own. When the selected image is one this build
-rendered, ``og:image:width``/``height``/``type`` are added from the file itself, and
-``og:image:alt`` from the image's own ``alt`` text if it has one.
+for pages with no image of their own. Whichever image ends up as the preview --
+selected here, or ``ogp_image`` on a page with none of its own -- gets
+``og:image:width``/``height``/``type`` added from the file itself, when it is one
+this build actually produced. The selected image's own ``alt`` text, if it has one,
+becomes ``og:image:alt``.
 
 """
 
@@ -149,6 +151,7 @@ def _set_image(
     else:
         selected = _numbered_image(app, pagename, doctree)
     if selected is None:
+        _add_fallback_image_metadata(app, fields)
         return
 
     url, alt = selected
@@ -286,6 +289,38 @@ _MIME_TYPES = {
 }
 
 
+def _add_fallback_image_metadata(app: Sphinx, fields: dict[str, str]) -> None:
+    """Add ``og:image:width``/``height``/``type`` for the site-wide ``ogp_image``.
+
+    A page with no image of its own never reaches ``_add_image_metadata``, since
+    neither ``_numbered_image`` nor ``_gallery_image`` selects anything -- but
+    ``sphinxext-opengraph`` still gives it a preview, via its own ``ogp_image``
+    fallback, which deserves the same metadata.
+    """
+    if app.config.ogp_use_first_image:
+        # sphinxext-opengraph uses the page's own first image instead of ogp_image
+        # in this case, and nothing here has selected one to enrich
+        return
+    url = _resolve_ogp_image(app)
+    if url is not None:
+        _add_image_metadata(app, url, fields)
+
+
+def _resolve_ogp_image(app: Sphinx) -> str | None:
+    """Return the absolute URL ``sphinxext-opengraph`` uses for ``ogp_image``.
+
+    Mirrors its own resolution: relative to ``ogp_site_url`` when ``ogp_image``
+    has no scheme of its own, used as-is otherwise.
+    """
+    image = app.config.ogp_image
+    if not image:
+        return None
+    if urllib.parse.urlparse(image).scheme:
+        return image
+    site_url = app.config.ogp_canonical_url or app.config.ogp_site_url
+    return urllib.parse.urljoin(site_url, image)
+
+
 def _add_image_metadata(app: Sphinx, url: str, fields: dict[str, str]) -> None:
     """Add ``og:image:width``/``height``/``type`` for a same-site, readable image.
 
@@ -310,10 +345,11 @@ def _add_image_metadata(app: Sphinx, url: str, fields: dict[str, str]) -> None:
 def _local_image_path(app: Sphinx, url: str) -> Path | None:
     """Return the on-disk file *url* was built from, or ``None`` if it isn't one.
 
-    ``app.builder.imgpath`` is relative to whatever page is currently being
-    written, not to the output directory -- ``imagedir`` (always ``_images``,
-    where Sphinx collects every local image site-wide) is the one to resolve
-    against ``app.outdir`` with.
+    Checked under both directories a same-site image can come from: ``imagedir``
+    (always ``_images``, where Sphinx collects every document-embedded image) for
+    one this build rendered, and ``_static`` for a hand-curated ``ogp_image``.
+    ``app.builder.imgpath`` is *not* one of these -- it is relative to whatever
+    page is currently being written, not to the output directory.
     """
     site_url = app.config.ogp_canonical_url or app.config.ogp_site_url
     if site_url and not url.startswith(site_url):
@@ -321,8 +357,11 @@ def _local_image_path(app: Sphinx, url: str) -> Path | None:
     basename = posixpath.basename(urllib.parse.urlparse(url).path)
     if not basename:
         return None
-    path = Path(app.outdir) / app.builder.imagedir / basename
-    return path if path.is_file() else None
+    for directory in (app.builder.imagedir, '_static'):
+        path = Path(app.outdir) / directory / basename
+        if path.is_file():
+            return path
+    return None
 
 
 def _read_dimensions(path: Path) -> tuple[int, int] | None:
