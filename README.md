@@ -71,6 +71,7 @@ extensions = [
 ]
 
 ogp_site_url = "https://docs.example.org/"
+ogp_image = "https://docs.example.org/_static/social_preview.png"
 ```
 
 Both extensions are required: `sphinx_autoopengraph` is what chooses each
@@ -79,6 +80,12 @@ tags -- without it, `sphinx_autoopengraph` does nothing. Listing both
 extensions is itself the opt-in. A page's preview image is chosen from
 whatever images it has, regardless of source. Its description is built from
 its own prose, whether or not the page has any images at all.
+
+Setting `ogp_image` is optional but recommended: it is `sphinxext-opengraph`'s
+own site-wide default, and this extension only ever overrides it for a page
+that has an image of its own. A page with none -- most hand-written prose
+pages -- keeps `ogp_image` as its preview, so without it those pages have no
+preview image at all.
 
 Either half can be turned off on its own:
 
