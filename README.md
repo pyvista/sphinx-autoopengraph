@@ -26,12 +26,16 @@ whichever image the gallery itself picked as its thumbnail instead, so a
 shared link and the gallery agree.
 
 Image selection is not tied to any one plot-generating extension -- it counts
-every image node on the page, in document order, whatever produced it. That
-means it works out of the box with a page that renders images via matplotlib's
-own [`.. plot::`](https://matplotlib.org/stable/api/sphinxext_plot_directive_api.html)
+every *locally rendered* image node on the page, in document order, whatever
+produced it. That means it works out of the box with a page that renders images
+via matplotlib's own
+[`.. plot::`](https://matplotlib.org/stable/api/sphinxext_plot_directive_api.html)
 directive, PyVista's [`.. pyvista-plot::`](https://dev.pyvista.org/extras/plot_directive)
 directive, a plain hand-written `.. image::`, or any mix of these on the same
-page.
+page. An externally hosted `.. image::` (any URL with a scheme, e.g. `https://...`)
+is never a candidate -- in practice these are almost always a CI status badge, a
+PyPI/conda version shield, a sponsor logo, a "launch on Binder" button, not
+something that represents the page.
 
 The description half has no equivalent in `sphinxext-opengraph` at all, and
 matters most for exactly the two page shapes a documentation site built with
@@ -139,8 +143,26 @@ Two things to be aware of when using it:
 - Selecting an image the page does not have also warns, and falls back to the
   first image.
 
-Pages with no images at all keep whatever site-wide `ogp_image` you have
-configured.
+Pages with no images at all -- and pages whose only images are all externally
+hosted -- keep whatever site-wide `ogp_image` you have configured. A page can
+also opt out of selecting one of its own images on purpose, with
+`.. autoopengraph_thumbnail:: none`, for a page whose images exist but are not
+representative of it (say, a landing page with real content further down, but
+whose own site-wide `ogp_image` -- a logo, a banner -- is what you actually
+want shared):
+
+```rst
+.. autoopengraph_thumbnail:: none
+```
+
+**This includes the site's root page.** A common shape for one is a landing
+page with its own inline images -- example plots, screenshots -- below an
+introduction. Without `:: none` on that page specifically, its preview is one
+of *those* images, not `ogp_image`, even though `ogp_image` is what most
+projects set up expecting it to double as the whole site's default preview.
+`ogp_image` is only ever a *fallback* for a page with no image of its own; it
+is never assumed to be what the root page wants just because it is the root
+page.
 
 ### Sphinx-Gallery examples
 

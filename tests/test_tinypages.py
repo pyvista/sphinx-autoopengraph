@@ -11,6 +11,7 @@ import struct
 import subprocess
 import sys
 import types
+import zlib
 
 from docutils import nodes
 import pytest
@@ -30,6 +31,19 @@ _META_CONTENT = re.compile(r'\bcontent="([^"]*)"')
 
 OPENGRAPH_SITE_URL = 'https://docs.example.org/'
 OPENGRAPH_FALLBACK_IMAGE = f'{OPENGRAPH_SITE_URL}_static/fallback.png'
+
+
+def _write_png(path: Path, width: int, height: int) -> None:
+    """Write a genuinely valid (not just header-plausible) solid white PNG."""
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
+
+    ihdr = chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0))
+    raw_scanlines = b''.join(b'\x00' + b'\xff\xff\xff' * width for _ in range(height))
+    idat = chunk(b'IDAT', zlib.compress(raw_scanlines))
+    iend = chunk(b'IEND', b'')
+    path.write_bytes(b'\x89PNG\r\n\x1a\n' + ihdr + idat + iend)
 
 
 def copy_tinypages(tmp_path: Path) -> Path:
@@ -119,7 +133,7 @@ def test_image_selection_picks_the_chosen_image(tmp_path: Path):
     assert returncode == 0, f'sphinx build failed with stdout:\n{out}\nstderr:\n{err}\n'
 
     tags = meta_tags(html_dir / 'some_images.html')
-    assert tags.get('og:image') == 'https://docs.example.org/_static/two.png'
+    assert tags.get('og:image') == f'{OPENGRAPH_SITE_URL}_images/two.png'
 
 
 def test_image_alt_uses_the_selected_images_own_alt_text(tmp_path: Path):
@@ -131,15 +145,30 @@ def test_image_alt_uses_the_selected_images_own_alt_text(tmp_path: Path):
     assert tags.get('og:image:alt') == 'A hand-picked description of the second image'
 
 
-def test_externally_hosted_image_has_no_dimensions_or_type(tmp_path: Path):
-    """Dimensions and MIME type are only added for images this build rendered."""
-    html_dir, returncode, out, err = _build_tinypages(tmp_path)
+def test_externally_hosted_image_is_never_selected(tmp_path: Path):
+    """An externally hosted image is skipped, even by default (first-image) selection.
+
+    In practice these are almost always a badge, a shield, or a sponsor logo --
+    a CI status badge or a "launch on Binder" button -- not something that
+    represents the page.
+    """
+    source_dir = _minimal_project(
+        tmp_path,
+        'Badge First\n===========\n\n'
+        '.. image:: https://img.shields.io/badge/status-ok-green.svg\n\n'
+        'A local image, the real subject of the page.\n\n'
+        '.. image:: local.png\n',
+    )
+    _write_png(source_dir / 'local.png', 100, 100)
+
+    html_dir = tmp_path / 'html'
+    returncode, out, err = _run_sphinx_build(
+        _sphinx_build_cmd(source_dir, html_dir, tmp_path / 'doctrees'),
+    )
     assert returncode == 0, f'sphinx build failed with stdout:\n{out}\nstderr:\n{err}\n'
 
-    tags = meta_tags(html_dir / 'some_images.html')
-    assert 'og:image:width' not in tags
-    assert 'og:image:height' not in tags
-    assert 'og:image:type' not in tags
+    tags = meta_tags(html_dir / 'index.html')
+    assert tags.get('og:image') == f'{OPENGRAPH_SITE_URL}_images/local.png'
 
 
 def test_locally_rendered_image_has_dimensions_and_type(tmp_path: Path):
@@ -167,13 +196,7 @@ def test_fallback_image_gets_dimensions_and_type(tmp_path: Path):
     )
     static_dir = source_dir / '_static'
     static_dir.mkdir()
-    (static_dir / 'banner.png').write_bytes(
-        b'\x89PNG\r\n\x1a\n'
-        + struct.pack('>I', 13)
-        + b'IHDR'
-        + struct.pack('>II', 1200, 630)
-        + b'\x08\x02\x00\x00\x00'
-    )
+    _write_png(static_dir / 'banner.png', 1200, 630)
 
     html_dir = tmp_path / 'html'
     returncode, out, err = _run_sphinx_build(
@@ -200,13 +223,7 @@ def test_fallback_image_resolves_a_relative_ogp_image_against_site_url(tmp_path:
     )
     static_dir = source_dir / '_static'
     static_dir.mkdir()
-    (static_dir / 'banner.png').write_bytes(
-        b'\x89PNG\r\n\x1a\n'
-        + struct.pack('>I', 13)
-        + b'IHDR'
-        + struct.pack('>II', 400, 300)
-        + b'\x08\x02\x00\x00\x00'
-    )
+    _write_png(static_dir / 'banner.png', 400, 300)
 
     html_dir = tmp_path / 'html'
     returncode, out, err = _run_sphinx_build(
@@ -342,6 +359,20 @@ def test_autoopengraph_thumbnail_rejected_in_gallery_example(tmp_path: Path):
     assert '# sphinx_gallery_thumbnail_number = 4' in f'{out}\n{err}'
 
 
+def test_autoopengraph_thumbnail_none_rejected_in_gallery_example(tmp_path: Path):
+    """Sphinx-Gallery has no equivalent to opting out, so the guidance differs."""
+    source_dir = copy_tinypages(tmp_path)
+    _append(
+        source_dir / 'gallery_src' / 'plot_default.py',
+        '\n# %%\n# .. autoopengraph_thumbnail:: none\n',
+    )
+    returncode, out, err = _run_sphinx_build(
+        _sphinx_build_cmd(source_dir, tmp_path / 'html', tmp_path / 'doctrees'),
+    )
+    assert returncode != 0
+    assert 'sphinx_gallery_thumbnail_path' in f'{out}\n{err}'
+
+
 def test_autoopengraph_thumbnail_selected_twice_warns(tmp_path: Path):
     """A page has one link preview, so a second selection is reported and ignored."""
     source_dir = copy_tinypages(tmp_path)
@@ -372,7 +403,7 @@ def test_autoopengraph_thumbnail_out_of_range_warns(tmp_path: Path):
     assert returncode != 0  # ``--keep-going`` still reports the warning at the end
     assert "'autoopengraph_thumbnail' selects image 999" in f'{out}\n{err}'
     assert meta_tags(html_dir / 'some_images.html').get('og:image') == (
-        'https://docs.example.org/_static/one.png'
+        f'{OPENGRAPH_SITE_URL}_images/one.png'
     )
 
 
@@ -455,10 +486,11 @@ def test_invalid_thumbnail_argument_errors(tmp_path: Path):
         _sphinx_build_cmd(source_dir, tmp_path / 'html2', tmp_path / 'doctrees2'),
     )
     assert returncode != 0
-    assert "expects an integer, got 'not-a-number'" in f'{out}\n{err}'
+    assert "expects an integer or 'none', got 'not-a-number'" in f'{out}\n{err}'
 
 
 def test_zero_thumbnail_argument_errors(tmp_path: Path):
+    """``0`` stays a plain error -- ``none`` is the opt-out, not ``0``."""
     source_dir = copy_tinypages(tmp_path)
     _append(source_dir / 'some_autodocs.rst', '\n.. autoopengraph_thumbnail:: 0\n')
     returncode, out, err = _run_sphinx_build(
@@ -466,17 +498,52 @@ def test_zero_thumbnail_argument_errors(tmp_path: Path):
     )
     assert returncode != 0
     assert 'is one-based, so 0 is not a valid image number' in f'{out}\n{err}'
+    assert "'none' to opt the page out" in f'{out}\n{err}'
+
+
+@pytest.mark.parametrize('spelling', ['none', 'None', 'NONE'])
+def test_none_thumbnail_argument_opts_out_of_selecting_an_image(tmp_path: Path, spelling: str):
+    """``none`` opts a page out of selecting any of its own images, even when it has one.
+
+    Case-insensitive, since 'None' is the natural spelling for a Python user.
+    """
+    source_dir = _minimal_project(
+        tmp_path,
+        f'.. autoopengraph_thumbnail:: {spelling}\n\n'
+        'Opt Out\n=======\n\n'
+        '.. image:: local.png\n\n'
+        'A local image this page does not want to preview with.\n',
+        conf_extra=(
+            "ogp_image = 'https://docs.example.org/_static/banner.png'\n"
+            "html_static_path = ['_static']\n"
+        ),
+    )
+    _write_png(source_dir / 'local.png', 50, 50)
+    static_dir = source_dir / '_static'
+    static_dir.mkdir()
+    _write_png(static_dir / 'banner.png', 1200, 630)
+
+    html_dir = tmp_path / 'html'
+    returncode, out, err = _run_sphinx_build(
+        _sphinx_build_cmd(source_dir, html_dir, tmp_path / 'doctrees'),
+    )
+    # Built with -W, so this also proves no warning fired despite the page having an image
+    assert returncode == 0, f'sphinx build failed with stdout:\n{out}\nstderr:\n{err}\n'
+
+    tags = meta_tags(html_dir / 'index.html')
+    assert tags.get('og:image') == 'https://docs.example.org/_static/banner.png'
+    assert tags.get('og:image:width') == '1200'
 
 
 def test_autoopengraph_thumbnail_fires_when_injected_via_insert_input(tmp_path: Path):
     """A directive still fires when injected via ``state_machine.insert_input()``."""
-    returncode, out, err, html_dir = _build_minimal(
+    source_dir = _minimal_project(
         tmp_path,
         'Nested Directive\n=================\n\n'
-        '.. image:: https://docs.example.org/_static/one.png\n\n'
+        '.. image:: one.png\n\n'
         '.. echo-raw::\n\n'
         '   .. autoopengraph_thumbnail:: 2\n\n'
-        '   .. image:: https://docs.example.org/_static/two.png\n',
+        '   .. image:: two.png\n',
         conf_extra=(
             'def setup(app):\n'
             '    from docutils.parsers.rst import Directive\n\n'
@@ -488,9 +555,16 @@ def test_autoopengraph_thumbnail_fires_when_injected_via_insert_input(tmp_path: 
             "    app.add_directive('echo-raw', EchoRaw)\n"
         ),
     )
+    _write_png(source_dir / 'one.png', 100, 100)
+    _write_png(source_dir / 'two.png', 200, 200)
+
+    html_dir = tmp_path / 'html'
+    returncode, out, err = _run_sphinx_build(
+        _sphinx_build_cmd(source_dir, html_dir, tmp_path / 'doctrees'),
+    )
     assert returncode == 0, f'sphinx build failed with stdout:\n{out}\nstderr:\n{err}\n'
     assert meta_tags(html_dir / 'index.html').get('og:image') == (
-        'https://docs.example.org/_static/two.png'
+        f'{OPENGRAPH_SITE_URL}_images/two.png'
     )
 
 
@@ -601,7 +675,7 @@ def test_out_of_range_warning_is_suppressed_when_rendering_is_known_to_be_skippe
 
 
 def test_works_without_any_plot_generating_extension(tmp_path: Path):
-    """Nothing here needs a plot directive, or even a locally-hosted image."""
+    """Nothing here needs a plot directive -- a plain, locally-hosted image is enough."""
     source_dir = tmp_path / 'source'
     source_dir.mkdir()
     (source_dir / 'conf.py').write_text(
@@ -612,10 +686,11 @@ def test_works_without_any_plot_generating_extension(tmp_path: Path):
     )
     (source_dir / 'index.rst').write_text(
         'Standalone\n==========\n\n'
-        '.. image:: https://docs.example.org/_static/photo.png\n\n'
+        '.. image:: photo.png\n\n'
         'A plain page with an ordinary image and its own leading prose.\n',
         encoding='utf-8',
     )
+    _write_png(source_dir / 'photo.png', 100, 100)
 
     html_dir = tmp_path / 'html'
     returncode, out, err = _run_sphinx_build(
@@ -624,7 +699,7 @@ def test_works_without_any_plot_generating_extension(tmp_path: Path):
     assert returncode == 0, f'sphinx build failed with stdout:\n{out}\nstderr:\n{err}\n'
 
     tags = meta_tags(html_dir / 'index.html')
-    assert tags.get('og:image') == 'https://docs.example.org/_static/photo.png'
+    assert tags.get('og:image') == f'{OPENGRAPH_SITE_URL}_images/photo.png'
     assert tags.get('og:description') == (
         'A plain page with an ordinary image and its own leading prose.'
     )
@@ -674,6 +749,7 @@ def test_local_image_path_rejects_a_different_site(tmp_path: Path):
         ),
         outdir=str(tmp_path),
         builder=types.SimpleNamespace(imagedir='.'),
+        env=types.SimpleNamespace(images={}),
     )
     assert _local_image_path(app, 'https://elsewhere.example.org/photo.png') is None
 
@@ -685,6 +761,7 @@ def test_local_image_path_rejects_a_file_this_build_never_wrote(tmp_path: Path):
         ),
         outdir=str(tmp_path),
         builder=types.SimpleNamespace(imagedir='.'),
+        env=types.SimpleNamespace(images={}),
     )
     assert _local_image_path(app, 'https://docs.example.org/missing.png') is None
 
@@ -697,6 +774,22 @@ def test_local_image_path_finds_a_same_site_file(tmp_path: Path):
         ),
         outdir=str(tmp_path),
         builder=types.SimpleNamespace(imagedir='.'),
+        env=types.SimpleNamespace(images={}),
+    )
+    assert _local_image_path(app, 'https://docs.example.org/photo.png') == tmp_path / 'photo.png'
+
+
+def test_local_image_path_falls_through_a_stale_env_images_entry(tmp_path: Path):
+    """A source file ``env.images`` points at but no longer exists doesn't crash the lookup."""
+    (tmp_path / 'photo.png').touch()
+    app = types.SimpleNamespace(
+        config=types.SimpleNamespace(
+            ogp_site_url='https://docs.example.org/', ogp_canonical_url=''
+        ),
+        outdir=str(tmp_path),
+        srcdir=str(tmp_path),
+        builder=types.SimpleNamespace(imagedir='.'),
+        env=types.SimpleNamespace(images={'deleted.png': ({'index'}, 'photo.png')}),
     )
     assert _local_image_path(app, 'https://docs.example.org/photo.png') == tmp_path / 'photo.png'
 
@@ -708,6 +801,7 @@ def test_local_image_path_rejects_a_url_with_no_path(tmp_path: Path):
         ),
         outdir=str(tmp_path),
         builder=types.SimpleNamespace(imagedir='.'),
+        env=types.SimpleNamespace(images={}),
     )
     assert _local_image_path(app, 'https://docs.example.org/') is None
 
@@ -720,6 +814,7 @@ def test_add_image_metadata_skips_an_unrecognized_local_file_type(tmp_path: Path
         ),
         outdir=str(tmp_path),
         builder=types.SimpleNamespace(imagedir='.'),
+        env=types.SimpleNamespace(images={}),
     )
     fields: dict[str, str] = {}
     _add_image_metadata(app, 'https://docs.example.org/diagram.svg', fields)

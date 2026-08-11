@@ -1,10 +1,12 @@
 """Open Graph images chosen by position, independent of what rendered them.
 
-This is not specific to any plot-generating extension: it numbers every image
-on a page -- in document order, regardless of whether a plot directive, a plain
-``.. image::``, or anything else produced it -- and lets a page point at the one
-it wants as its ``og:image``. The default is the first image, which is what most
-pages want without any selection at all.
+This is not specific to any plot-generating extension: it numbers every
+*locally rendered* image on a page -- in document order, regardless of whether a
+plot directive, a plain ``.. image::``, or anything else produced it -- and lets a
+page point at the one it wants as its ``og:image``. The default is the first
+image, which is what most pages want without any selection at all. Externally
+hosted images (badges, shields, sponsor logos, ...) are never candidates, default
+or explicitly selected; see :func:`_image_nodes`.
 
 Sphinx-Gallery pages are handled separately, since they already have a thumbnail:
 their ``og:image`` always matches the gallery's own selection, using the full
@@ -13,16 +15,24 @@ Sphinx-Gallery renders.
 
 The result is written to the page's ``og:image`` field before ``sphinxext-opengraph``
 renders its tags, so its own default (``ogp_image``) is only ever used as a fallback
-for pages with no image of their own. Whichever image ends up as the preview --
-selected here, or ``ogp_image`` on a page with none of its own -- gets
-``og:image:width``/``height``/``type`` added from the file itself, when it is one
-this build actually produced. The selected image's own ``alt`` text, if it has one,
-becomes ``og:image:alt``.
+for pages with no image of their own -- this includes the site's root page. A
+project whose front page has its own images (a common shape: a landing page with
+inline example plots below the fold) will get one of *those* as its preview, not
+``ogp_image``, unless that page opts out with ``.. autoopengraph_thumbnail:: none``
+(see :class:`OpenGraphThumbnailDirective`). ``ogp_image`` being the project's
+intended preview for the root page specifically has to be said explicitly; it is
+never assumed just because it is the root page.
+
+Whichever image ends up as the preview -- selected here, or ``ogp_image`` on a page
+with none of its own -- gets ``og:image:width``/``height``/``type`` added from the
+file itself, when it is one this build actually produced. The selected image's own
+``alt`` text, if it has one, becomes ``og:image:alt``.
 
 """
 
 from __future__ import annotations
 
+import enum
 from pathlib import Path
 import posixpath
 import struct
@@ -50,11 +60,27 @@ CONFIG_VALUE = 'autoopengraph_image'
 _THUMBNAIL_NUMBER = '_autoopengraph_thumbnail_number'
 
 
+class _ThumbnailSelection(enum.IntEnum):
+    """Sentinel stored in ``_THUMBNAIL_NUMBER`` in place of a real, user-facing number.
+
+    A plain ``0`` would work identically (no real position is ever ``0``), but
+    reads at a glance like a user-supplied value that slipped through unchecked.
+    An ``IntEnum`` still compares equal to the plain ``int`` it wraps, and,
+    unlike a bare sentinel object, round-trips correctly through the pickling
+    Sphinx's doctree caching does.
+    """
+
+    OPT_OUT = 0
+
+
 class OpenGraphThumbnailDirective(Directive):
     """The ``.. autoopengraph_thumbnail::`` directive.
 
     Selects which of the page's images is used as its Open Graph image. See this
-    module's docstring.
+    module's docstring. An argument of ``none`` opts the page out of selecting
+    one of its own images entirely, falling back to the site-wide ``ogp_image``
+    instead -- for a page whose own images exist but are not representative of
+    it, the site's root page chief among them.
     """
 
     has_content = False
@@ -74,19 +100,23 @@ class OpenGraphThumbnailDirective(Directive):
         document = self.state_machine.document
         env = document.settings.env
         argument = self.arguments[0].strip()
-        try:
-            number = int(argument)
-        except ValueError as err:
-            msg = f"'autoopengraph_thumbnail' expects an integer, got {argument!r}."
-            raise self.error(msg) from err
-        if number == 0:
-            msg = (
-                "'autoopengraph_thumbnail' is one-based, so 0 is not a valid image "
-                'number. Use 1 for the first image, or -1 for the last one.'
-            )
-            raise self.error(msg)
+        if argument.lower() == 'none':
+            number = _ThumbnailSelection.OPT_OUT
+        else:
+            try:
+                number = int(argument)
+            except ValueError as err:
+                msg = f"'autoopengraph_thumbnail' expects an integer or 'none', got {argument!r}."
+                raise self.error(msg) from err
+            if number == 0:
+                msg = (
+                    "'autoopengraph_thumbnail' is one-based, so 0 is not a valid image "
+                    "number. Use 1 for the first image, -1 for the last one, or 'none' "
+                    'to opt the page out of selecting one of its own images entirely.'
+                )
+                raise self.error(msg)
         if _is_sphinx_gallery_document(env.app, env.docname):
-            raise self.error(_gallery_thumbnail_error(number))
+            raise self.error(_gallery_thumbnail_error(argument))
         if _THUMBNAIL_NUMBER in document.attributes:
             # A warning rather than an error: Open Graph metadata is per-document, so a
             # page documenting several objects collides even when each of their own
@@ -105,12 +135,20 @@ class OpenGraphThumbnailDirective(Directive):
         return []
 
 
-def _gallery_thumbnail_error(number: int) -> str:
+def _gallery_thumbnail_error(argument: str) -> str:
     """Return guidance for choosing a Sphinx-Gallery example's thumbnail."""
+    if argument.lower() == 'none':
+        return (
+            "'autoopengraph_thumbnail' cannot be used in a Sphinx-Gallery example, "
+            'because its Open Graph image always follows the gallery thumbnail, and '
+            'Sphinx-Gallery has no equivalent to opting out. Use '
+            "'sphinx_gallery_thumbnail_path' instead if none of the example's own "
+            'figures represent it well.'
+        )
     return (
         "'autoopengraph_thumbnail' cannot be used in a Sphinx-Gallery example, "
         'because its Open Graph image always follows the gallery thumbnail. '
-        f"Use '# sphinx_gallery_thumbnail_number = {number}' instead."
+        f"Use '# sphinx_gallery_thumbnail_number = {argument}' instead."
     )
 
 
@@ -165,11 +203,14 @@ def _numbered_image(
     app: Sphinx, docname: str, doctree: nodes.document
 ) -> tuple[str, str | None] | None:
     """Return the URL and alt text of the image a page selects by position."""
+    number = doctree.get(_THUMBNAIL_NUMBER, 1)
+    if number == _ThumbnailSelection.OPT_OUT:
+        return None
+
     images = list(_image_nodes(doctree))
     if not images:
         return None
 
-    number = doctree.get(_THUMBNAIL_NUMBER, 1)
     index = number - 1 if number > 0 else number
     if not -len(images) <= index < len(images):
         # Not fatal: a build that deliberately skips rendering (e.g. PyVista's own
@@ -264,13 +305,20 @@ def _gallery_thumbnail_selection(source: Path) -> tuple[int, str | None]:
 
 
 def _image_nodes(doctree: nodes.document) -> Iterator[nodes.Element]:
-    """Yield every image-bearing node of a page, in document order.
+    """Yield every locally-rendered image-bearing node of a page, in document order.
 
     Sphinx-Gallery renders its images as ``imgsgnode`` rather than
     :class:`docutils.nodes.image`, so nodes are matched on carrying a ``uri``.
+    An externally hosted image (any ``uri`` with a scheme, e.g. ``https://...``)
+    is never a candidate: in practice these are almost always a badge, a shield,
+    or a sponsor logo -- a CI status badge or a "launch on Binder" button, not
+    something that represents the page -- and are excluded here rather than only
+    from the default (unselected) case, since a directive-produced image is
+    always local, so this never affects one.
     """
     for node in doctree.findall(nodes.Element):
-        if node.get('uri'):
+        uri = node.get('uri')
+        if uri and not urllib.parse.urlparse(uri).scheme:
             yield node
 
 
@@ -345,11 +393,17 @@ def _add_image_metadata(app: Sphinx, url: str, fields: dict[str, str]) -> None:
 def _local_image_path(app: Sphinx, url: str) -> Path | None:
     """Return the on-disk file *url* was built from, or ``None`` if it isn't one.
 
-    Checked under both directories a same-site image can come from: ``imagedir``
-    (always ``_images``, where Sphinx collects every document-embedded image) for
-    one this build rendered, and ``_static`` for a hand-curated ``ogp_image``.
-    ``app.builder.imgpath`` is *not* one of these -- it is relative to whatever
-    page is currently being written, not to the output directory.
+    Prefers the original source file over the output copy under ``imagedir``
+    (always ``_images``): Sphinx defers copying document-embedded images to a
+    ``build-finished`` task (``copy_image_files``), so at ``html-page-context``
+    time that copy may not exist yet, while the source has been on disk for the
+    whole build. ``env.images`` maps each original source-relative path to the
+    unique output basename Sphinx gave it, so *basename* is looked up there in
+    reverse. Falls back to ``_static`` for a hand-curated ``ogp_image``, which
+    ``html_static_path`` copies up front rather than deferring.
+
+    ``app.builder.imgpath`` is *not* used for any of this -- it is relative to
+    whatever page is currently being written, not to the output directory.
     """
     site_url = app.config.ogp_canonical_url or app.config.ogp_site_url
     if site_url and not url.startswith(site_url):
@@ -357,6 +411,13 @@ def _local_image_path(app: Sphinx, url: str) -> Path | None:
     basename = posixpath.basename(urllib.parse.urlparse(url).path)
     if not basename:
         return None
+
+    for original, (_docnames, unique_name) in app.env.images.items():
+        if unique_name == basename:
+            source_path = Path(app.srcdir) / original
+            if source_path.is_file():
+                return source_path
+
     for directory in (app.builder.imagedir, '_static'):
         path = Path(app.outdir) / directory / basename
         if path.is_file():
