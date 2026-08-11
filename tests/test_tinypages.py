@@ -506,11 +506,15 @@ def test_zero_thumbnail_argument_errors(tmp_path: Path):
     assert "'none' to opt the page out" in f'{out}\n{err}'
 
 
-def test_none_thumbnail_argument_opts_out_of_selecting_an_image(tmp_path: Path):
-    """``none`` opts a page out of selecting any of its own images, even when it has one."""
+@pytest.mark.parametrize('spelling', ['none', 'None', 'NONE'])
+def test_none_thumbnail_argument_opts_out_of_selecting_an_image(tmp_path: Path, spelling: str):
+    """``none`` opts a page out of selecting any of its own images, even when it has one.
+
+    Case-insensitive, since 'None' is the natural spelling for a Python user.
+    """
     source_dir = _minimal_project(
         tmp_path,
-        '.. autoopengraph_thumbnail:: none\n\n'
+        f'.. autoopengraph_thumbnail:: {spelling}\n\n'
         'Opt Out\n=======\n\n'
         '.. image:: local.png\n\n'
         'A local image this page does not want to preview with.\n',
