@@ -8,4 +8,5 @@ Contents:
 
     some_images
     some_autodocs
+    download_links
     gallery/index
