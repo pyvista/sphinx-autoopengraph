@@ -11,6 +11,7 @@ import struct
 import subprocess
 import sys
 import types
+import zlib
 
 from docutils import nodes
 import pytest
@@ -33,13 +34,16 @@ OPENGRAPH_FALLBACK_IMAGE = f'{OPENGRAPH_SITE_URL}_static/fallback.png'
 
 
 def _write_png(path: Path, width: int, height: int) -> None:
-    path.write_bytes(
-        b'\x89PNG\r\n\x1a\n'
-        + struct.pack('>I', 13)
-        + b'IHDR'
-        + struct.pack('>II', width, height)
-        + b'\x08\x02\x00\x00\x00'
-    )
+    """Write a genuinely valid (not just header-plausible) solid white PNG."""
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
+
+    ihdr = chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0))
+    raw_scanlines = b''.join(b'\x00' + b'\xff\xff\xff' * width for _ in range(height))
+    idat = chunk(b'IDAT', zlib.compress(raw_scanlines))
+    iend = chunk(b'IEND', b'')
+    path.write_bytes(b'\x89PNG\r\n\x1a\n' + ihdr + idat + iend)
 
 
 def copy_tinypages(tmp_path: Path) -> Path:
