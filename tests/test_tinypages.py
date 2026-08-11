@@ -166,13 +166,7 @@ def test_gallery_thumbnail_follows_sphinx_gallery_thumbnail_number(tmp_path: Pat
 
 
 def test_gallery_thumbnail_follows_sphinx_gallery_thumbnail_path(tmp_path: Path):
-    """A ``sphinx_gallery_thumbnail_path`` selection has no full resolution image.
-
-    Unlike ``sphinx_gallery_thumbnail_number``, which points at one of the
-    example's own rendered figures, ``thumbnail_path`` points at a file that was
-    never one of them, so there is no full-resolution version on the page to
-    prefer -- the gallery's own (small) thumbnail file is the only image there is.
-    """
+    """A ``sphinx_gallery_thumbnail_path`` selection has no full resolution image."""
     html_dir, returncode, out, err = _build_tinypages(tmp_path)
     assert returncode == 0, f'sphinx build failed with stdout:\n{out}\nstderr:\n{err}\n'
 
@@ -196,16 +190,7 @@ def test_gallery_description_uses_the_examples_own_introduction(tmp_path: Path):
 
 
 def test_description_excludes_a_download_only_paragraph(tmp_path: Path):
-    """A paragraph of nothing but download links contributes no text at all.
-
-    Mirrors the shape Sphinx-Gallery's own download admonition and
-    ``sphinx-examples-as-code``'s replacement download links both produce: a
-    paragraph whose only content is one or more ``download_reference`` nodes,
-    with just separators (here, " | ") between them. Both are already excluded
-    as a *node type* (``download_reference`` is always skipped, regardless of
-    surrounding structure), so this holds regardless of which extension built
-    the paragraph -- ``download_links.rst`` does not depend on either one.
-    """
+    """A paragraph of nothing but download links contributes no text at all."""
     html_dir, returncode, out, err = _build_tinypages(tmp_path)
     assert returncode == 0, f'sphinx build failed with stdout:\n{out}\nstderr:\n{err}\n'
 
@@ -265,11 +250,7 @@ def test_autoopengraph_thumbnail_out_of_range_warns(tmp_path: Path):
 
 
 def test_autoopengraph_image_can_be_disabled(tmp_path: Path):
-    """``autoopengraph_image = False`` leaves ``sphinxext-opengraph`` alone.
-
-    Distinct from disabling ``sphinx_autoopengraph`` entirely: the description
-    half stays on, only the image selection turns off.
-    """
+    """``autoopengraph_image = False`` turns off image selection, not descriptions."""
     html_dir, returncode, out, err = _build_tinypages(tmp_path, 'autoopengraph_image = False')
     assert returncode == 0, f'sphinx build failed with stdout:\n{out}\nstderr:\n{err}\n'
 
@@ -279,11 +260,7 @@ def test_autoopengraph_image_can_be_disabled(tmp_path: Path):
 
 
 def test_autoopengraph_description_can_be_disabled(tmp_path: Path):
-    """``autoopengraph_description = False`` leaves ``sphinxext-opengraph`` alone.
-
-    Distinct from disabling ``sphinx_autoopengraph`` entirely: the image half
-    stays on, only the description parser turns off.
-    """
+    """``autoopengraph_description = False`` turns off descriptions, not image selection."""
     html_dir, returncode, out, err = _build_tinypages(tmp_path, 'autoopengraph_description = False')
     assert returncode == 0, f'sphinx build failed with stdout:\n{out}\nstderr:\n{err}\n'
 
@@ -294,11 +271,7 @@ def test_autoopengraph_description_can_be_disabled(tmp_path: Path):
 
 
 def test_requires_sphinxext_opengraph(tmp_path: Path):
-    """Enabling ``sphinx_autoopengraph`` is a no-op without ``sphinxext.opengraph``.
-
-    Listing ``sphinx_autoopengraph`` is itself the opt-in, so the only way to get
-    nothing is to not also enable ``sphinxext.opengraph``.
-    """
+    """``sphinx_autoopengraph`` is a no-op without ``sphinxext.opengraph`` also enabled."""
     source_dir = copy_tinypages(tmp_path)
     conf = source_dir / 'conf.py'
     conf.write_text(conf.read_text(encoding='utf-8').replace("'sphinxext.opengraph',\n", ''))
@@ -312,14 +285,7 @@ def test_requires_sphinxext_opengraph(tmp_path: Path):
 
 
 def test_epub_builder_is_left_alone(tmp_path: Path):
-    """``sphinxext-opengraph`` itself has no epub support, so neither does this.
-
-    ``page_fields`` opts every page out before either half of this extension does
-    anything, so an epub build with ``sphinx_autoopengraph`` enabled behaves exactly
-    as it would without it. A minimal, locally-hosted project is built rather than
-    ``tinypages``, whose remote-hosted images the epub builder tries (and, offline,
-    fails) to download -- unrelated to what this test checks.
-    """
+    """An epub build with ``sphinx_autoopengraph`` enabled behaves like one without it."""
     source_dir = _minimal_project(
         tmp_path,
         'Epub\n====\n\nSome real prose for the description.\n',
@@ -376,18 +342,7 @@ def test_zero_thumbnail_argument_errors(tmp_path: Path):
 
 
 def test_autoopengraph_thumbnail_fires_when_injected_via_insert_input(tmp_path: Path):
-    """A directive still fires when injected by another directive, not written in the source.
-
-    Some directives (matplotlib's and PyVista's own plot directives among them)
-    render by re-inserting a block of their own raw content back into the RST
-    stream, via ``state_machine.insert_input()``, for a second parsing pass --
-    which can make a nested ``.. autoopengraph_thumbnail::`` line fire as a real
-    directive even though it was never present in the page's own source text.
-    ``echo-raw``, registered below purely for this test, reproduces just that
-    mechanism, independent of any real plot directive -- and of whether a
-    future PyVista docstring still uses one explicitly, or relies on numpydoc's
-    automatic wrapping instead.
-    """
+    """A directive still fires when injected via ``state_machine.insert_input()``."""
     returncode, out, err, html_dir = _build_minimal(
         tmp_path,
         'Nested Directive\n=================\n\n'
@@ -549,14 +504,7 @@ def test_works_without_any_plot_generating_extension(tmp_path: Path):
 
 
 def test_is_skipped_treats_a_bare_text_node_as_furniture():
-    """Defensive: both call sites already special-case ``Text`` before calling this.
-
-    ``_prose_paragraphs`` never recurses into a paragraph's children, and
-    ``_prose_text`` yields ``Text`` directly without calling ``_is_skipped`` on it,
-    so this is never reached through either of them -- checked directly here so a
-    future caller that does not already special-case ``Text`` still gets the right
-    answer instead of an ``AttributeError`` from ``.get('classes', ...)``.
-    """
+    """A ``Text`` node is treated as furniture, not prose."""
     assert _is_skipped(nodes.Text('some text')) is True
 
 
