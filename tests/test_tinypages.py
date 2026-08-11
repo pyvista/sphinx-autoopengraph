@@ -490,12 +490,7 @@ def test_invalid_thumbnail_argument_errors(tmp_path: Path):
 
 
 def test_zero_thumbnail_argument_errors(tmp_path: Path):
-    """``0`` stays a plain error -- ``none`` is the opt-out, not ``0``.
-
-    This directive is otherwise one-based, with negative values counting from
-    the end, so ``0`` meaning "none of the above" would read as an off-by-one
-    rather than an intentional opt-out.
-    """
+    """``0`` stays a plain error -- ``none`` is the opt-out, not ``0``."""
     source_dir = copy_tinypages(tmp_path)
     _append(source_dir / 'some_autodocs.rst', '\n.. autoopengraph_thumbnail:: 0\n')
     returncode, out, err = _run_sphinx_build(

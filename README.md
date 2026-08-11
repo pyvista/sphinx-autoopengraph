@@ -155,10 +155,6 @@ want shared):
 .. autoopengraph_thumbnail:: none
 ```
 
-(Not `0`: this directive is otherwise one-based, with negative values counting
-from the end, so a `0` meaning "none of the above" would read as an off-by-one
-rather than an intentional opt-out -- it stays a plain error instead.)
-
 **This includes the site's root page.** A common shape for one is a landing
 page with its own inline images -- example plots, screenshots -- below an
 introduction. Without `:: none` on that page specifically, its preview is one

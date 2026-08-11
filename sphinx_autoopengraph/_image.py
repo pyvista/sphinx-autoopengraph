@@ -66,10 +66,7 @@ class OpenGraphThumbnailDirective(Directive):
     module's docstring. An argument of ``none`` opts the page out of selecting
     one of its own images entirely, falling back to the site-wide ``ogp_image``
     instead -- for a page whose own images exist but are not representative of
-    it, the site's root page chief among them. (Not ``0``: this directive is
-    otherwise one-based, with negative values counting from the end, so a ``0``
-    meaning "none of the above" would read as an off-by-one rather than an
-    intentional opt-out.)
+    it, the site's root page chief among them.
     """
 
     has_content = False
