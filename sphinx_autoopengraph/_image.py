@@ -32,6 +32,7 @@ file itself, when it is one this build actually produced. The selected image's o
 
 from __future__ import annotations
 
+import enum
 from pathlib import Path
 import posixpath
 import struct
@@ -57,6 +58,19 @@ CONFIG_VALUE = 'autoopengraph_image'
 
 #: Document attribute holding the ``autoopengraph_thumbnail`` argument for the page
 _THUMBNAIL_NUMBER = '_autoopengraph_thumbnail_number'
+
+
+class _ThumbnailSelection(enum.IntEnum):
+    """Sentinel stored in ``_THUMBNAIL_NUMBER`` in place of a real, user-facing number.
+
+    A plain ``0`` would work identically (no real position is ever ``0``), but
+    reads at a glance like a user-supplied value that slipped through unchecked.
+    An ``IntEnum`` still compares equal to the plain ``int`` it wraps, and,
+    unlike a bare sentinel object, round-trips correctly through the pickling
+    Sphinx's doctree caching does.
+    """
+
+    OPT_OUT = 0
 
 
 class OpenGraphThumbnailDirective(Directive):
@@ -87,7 +101,7 @@ class OpenGraphThumbnailDirective(Directive):
         env = document.settings.env
         argument = self.arguments[0].strip()
         if argument.lower() == 'none':
-            number = 0  # internal-only sentinel; never user-facing as a number
+            number = _ThumbnailSelection.OPT_OUT
         else:
             try:
                 number = int(argument)
@@ -190,8 +204,7 @@ def _numbered_image(
 ) -> tuple[str, str | None] | None:
     """Return the URL and alt text of the image a page selects by position."""
     number = doctree.get(_THUMBNAIL_NUMBER, 1)
-    if number == 0:
-        # Explicit opt-out: fall back to the site-wide ogp_image instead
+    if number == _ThumbnailSelection.OPT_OUT:
         return None
 
     images = list(_image_nodes(doctree))
