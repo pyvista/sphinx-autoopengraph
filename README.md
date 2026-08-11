@@ -30,7 +30,7 @@ every image node on the page, in document order, whatever produced it. That
 means it works out of the box with a page that renders images via matplotlib's
 own [`.. plot::`](https://matplotlib.org/stable/api/sphinxext_plot_directive_api.html)
 directive, [PyVista](https://github.com/pyvista/pyvista)'s
-`pyvista.ext.plot_directive`, a plain hand-written `.. image::`, or any mix of
+`.. pyvista-plot::`, a plain hand-written `.. image::`, or any mix of
 these on the same page.
 
 The description half has no equivalent in `sphinxext-opengraph` at all, and
@@ -91,9 +91,8 @@ Both default to `True`.
 
 ## Choosing the preview image
 
-By default a page previews the first image it shows. When the first image is
-only scene-setting, pick a different one with the `autoopengraph_thumbnail`
-directive:
+By default a page previews the first image it shows. Pick a different one
+with the `autoopengraph_thumbnail` directive:
 
 ```rst
 .. autoopengraph_thumbnail:: 2
@@ -166,9 +165,3 @@ uv sync --group dev
 uv run pytest
 uv run pre-commit run --all-files
 ```
-
-## Status
-
-This package started inside the [PyVista](https://github.com/pyvista/pyvista)
-repository and has no PyVista-specific dependency -- it works with any Sphinx
-project.
