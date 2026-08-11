@@ -146,22 +146,27 @@ Two things to be aware of when using it:
 Pages with no images at all -- and pages whose only images are all externally
 hosted -- keep whatever site-wide `ogp_image` you have configured. A page can
 also opt out of selecting one of its own images on purpose, with
-`.. autoopengraph_thumbnail:: 0`, for a page whose images exist but are not
+`.. autoopengraph_thumbnail:: none`, for a page whose images exist but are not
 representative of it (say, a landing page with real content further down, but
 whose own site-wide `ogp_image` -- a logo, a banner -- is what you actually
 want shared):
 
 ```rst
-.. autoopengraph_thumbnail:: 0
+.. autoopengraph_thumbnail:: none
 ```
+
+(Not `0`: this directive is otherwise one-based, with negative values counting
+from the end, so a `0` meaning "none of the above" would read as an off-by-one
+rather than an intentional opt-out -- it stays a plain error instead.)
 
 **This includes the site's root page.** A common shape for one is a landing
 page with its own inline images -- example plots, screenshots -- below an
-introduction. Without `:: 0` on that page specifically, its preview is one of
-*those* images, not `ogp_image`, even though `ogp_image` is what most projects
-set up expecting it to double as the whole site's default preview. `ogp_image`
-is only ever a *fallback* for a page with no image of its own; it is never
-assumed to be what the root page wants just because it is the root page.
+introduction. Without `:: none` on that page specifically, its preview is one
+of *those* images, not `ogp_image`, even though `ogp_image` is what most
+projects set up expecting it to double as the whole site's default preview.
+`ogp_image` is only ever a *fallback* for a page with no image of its own; it
+is never assumed to be what the root page wants just because it is the root
+page.
 
 ### Sphinx-Gallery examples
 

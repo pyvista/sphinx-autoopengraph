@@ -359,6 +359,20 @@ def test_autoopengraph_thumbnail_rejected_in_gallery_example(tmp_path: Path):
     assert '# sphinx_gallery_thumbnail_number = 4' in f'{out}\n{err}'
 
 
+def test_autoopengraph_thumbnail_none_rejected_in_gallery_example(tmp_path: Path):
+    """Sphinx-Gallery has no equivalent to opting out, so the guidance differs."""
+    source_dir = copy_tinypages(tmp_path)
+    _append(
+        source_dir / 'gallery_src' / 'plot_default.py',
+        '\n# %%\n# .. autoopengraph_thumbnail:: none\n',
+    )
+    returncode, out, err = _run_sphinx_build(
+        _sphinx_build_cmd(source_dir, tmp_path / 'html', tmp_path / 'doctrees'),
+    )
+    assert returncode != 0
+    assert 'sphinx_gallery_thumbnail_path' in f'{out}\n{err}'
+
+
 def test_autoopengraph_thumbnail_selected_twice_warns(tmp_path: Path):
     """A page has one link preview, so a second selection is reported and ignored."""
     source_dir = copy_tinypages(tmp_path)
@@ -472,14 +486,31 @@ def test_invalid_thumbnail_argument_errors(tmp_path: Path):
         _sphinx_build_cmd(source_dir, tmp_path / 'html2', tmp_path / 'doctrees2'),
     )
     assert returncode != 0
-    assert "expects an integer, got 'not-a-number'" in f'{out}\n{err}'
+    assert "expects an integer or 'none', got 'not-a-number'" in f'{out}\n{err}'
 
 
-def test_zero_thumbnail_argument_opts_out_of_selecting_an_image(tmp_path: Path):
-    """``0`` opts a page out of selecting any of its own images, even when it has one."""
+def test_zero_thumbnail_argument_errors(tmp_path: Path):
+    """``0`` stays a plain error -- ``none`` is the opt-out, not ``0``.
+
+    This directive is otherwise one-based, with negative values counting from
+    the end, so ``0`` meaning "none of the above" would read as an off-by-one
+    rather than an intentional opt-out.
+    """
+    source_dir = copy_tinypages(tmp_path)
+    _append(source_dir / 'some_autodocs.rst', '\n.. autoopengraph_thumbnail:: 0\n')
+    returncode, out, err = _run_sphinx_build(
+        _sphinx_build_cmd(source_dir, tmp_path / 'html', tmp_path / 'doctrees'),
+    )
+    assert returncode != 0
+    assert 'is one-based, so 0 is not a valid image number' in f'{out}\n{err}'
+    assert "'none' to opt the page out" in f'{out}\n{err}'
+
+
+def test_none_thumbnail_argument_opts_out_of_selecting_an_image(tmp_path: Path):
+    """``none`` opts a page out of selecting any of its own images, even when it has one."""
     source_dir = _minimal_project(
         tmp_path,
-        '.. autoopengraph_thumbnail:: 0\n\n'
+        '.. autoopengraph_thumbnail:: none\n\n'
         'Opt Out\n=======\n\n'
         '.. image:: local.png\n\n'
         'A local image this page does not want to preview with.\n',

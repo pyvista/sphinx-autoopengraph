@@ -18,7 +18,7 @@ renders its tags, so its own default (``ogp_image``) is only ever used as a fall
 for pages with no image of their own -- this includes the site's root page. A
 project whose front page has its own images (a common shape: a landing page with
 inline example plots below the fold) will get one of *those* as its preview, not
-``ogp_image``, unless that page opts out with ``.. autoopengraph_thumbnail:: 0``
+``ogp_image``, unless that page opts out with ``.. autoopengraph_thumbnail:: none``
 (see :class:`OpenGraphThumbnailDirective`). ``ogp_image`` being the project's
 intended preview for the root page specifically has to be said explicitly; it is
 never assumed just because it is the root page.
@@ -63,10 +63,13 @@ class OpenGraphThumbnailDirective(Directive):
     """The ``.. autoopengraph_thumbnail::`` directive.
 
     Selects which of the page's images is used as its Open Graph image. See this
-    module's docstring. An argument of ``0`` opts the page out of selecting one
-    of its own images entirely, falling back to the site-wide ``ogp_image``
+    module's docstring. An argument of ``none`` opts the page out of selecting
+    one of its own images entirely, falling back to the site-wide ``ogp_image``
     instead -- for a page whose own images exist but are not representative of
-    it, the site's root page chief among them.
+    it, the site's root page chief among them. (Not ``0``: this directive is
+    otherwise one-based, with negative values counting from the end, so a ``0``
+    meaning "none of the above" would read as an off-by-one rather than an
+    intentional opt-out.)
     """
 
     has_content = False
@@ -86,13 +89,23 @@ class OpenGraphThumbnailDirective(Directive):
         document = self.state_machine.document
         env = document.settings.env
         argument = self.arguments[0].strip()
-        try:
-            number = int(argument)
-        except ValueError as err:
-            msg = f"'autoopengraph_thumbnail' expects an integer, got {argument!r}."
-            raise self.error(msg) from err
+        if argument.lower() == 'none':
+            number = 0  # internal-only sentinel; never user-facing as a number
+        else:
+            try:
+                number = int(argument)
+            except ValueError as err:
+                msg = f"'autoopengraph_thumbnail' expects an integer or 'none', got {argument!r}."
+                raise self.error(msg) from err
+            if number == 0:
+                msg = (
+                    "'autoopengraph_thumbnail' is one-based, so 0 is not a valid image "
+                    "number. Use 1 for the first image, -1 for the last one, or 'none' "
+                    'to opt the page out of selecting one of its own images entirely.'
+                )
+                raise self.error(msg)
         if _is_sphinx_gallery_document(env.app, env.docname):
-            raise self.error(_gallery_thumbnail_error(number))
+            raise self.error(_gallery_thumbnail_error(argument))
         if _THUMBNAIL_NUMBER in document.attributes:
             # A warning rather than an error: Open Graph metadata is per-document, so a
             # page documenting several objects collides even when each of their own
@@ -111,12 +124,20 @@ class OpenGraphThumbnailDirective(Directive):
         return []
 
 
-def _gallery_thumbnail_error(number: int) -> str:
+def _gallery_thumbnail_error(argument: str) -> str:
     """Return guidance for choosing a Sphinx-Gallery example's thumbnail."""
+    if argument.lower() == 'none':
+        return (
+            "'autoopengraph_thumbnail' cannot be used in a Sphinx-Gallery example, "
+            'because its Open Graph image always follows the gallery thumbnail, and '
+            'Sphinx-Gallery has no equivalent to opting out. Use '
+            "'sphinx_gallery_thumbnail_path' instead if none of the example's own "
+            'figures represent it well.'
+        )
     return (
         "'autoopengraph_thumbnail' cannot be used in a Sphinx-Gallery example, "
         'because its Open Graph image always follows the gallery thumbnail. '
-        f"Use '# sphinx_gallery_thumbnail_number = {number}' instead."
+        f"Use '# sphinx_gallery_thumbnail_number = {argument}' instead."
     )
 
 
