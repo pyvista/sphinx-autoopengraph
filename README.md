@@ -29,7 +29,7 @@ Image selection is not tied to any one plot-generating extension -- it counts
 every image node on the page, in document order, whatever produced it. That
 means it works out of the box with a page that renders images via matplotlib's
 own [`.. plot::`](https://matplotlib.org/stable/api/sphinxext_plot_directive_api.html)
-directive, PyVista's [`.. pyvista-plot::`](https://dev.pyvista.org/extras/plot_directive),
+directive, PyVista's [`.. pyvista-plot::`](https://dev.pyvista.org/extras/plot_directive)
 directive, a plain hand-written `.. image::`, or any mix of these on the same
 page.
 
