@@ -155,6 +155,96 @@ def test_locally_rendered_image_has_dimensions_and_type(tmp_path: Path):
     assert int(tags['og:image:height']) > 0
 
 
+def test_fallback_image_gets_dimensions_and_type(tmp_path: Path):
+    """A page with no images of its own still gets metadata for the ``ogp_image`` fallback."""
+    source_dir = _minimal_project(
+        tmp_path,
+        'No Images\n==========\n\nJust prose, no images at all on this page.\n',
+        conf_extra=(
+            "ogp_image = 'https://docs.example.org/_static/banner.png'\n"
+            "html_static_path = ['_static']\n"
+        ),
+    )
+    static_dir = source_dir / '_static'
+    static_dir.mkdir()
+    (static_dir / 'banner.png').write_bytes(
+        b'\x89PNG\r\n\x1a\n'
+        + struct.pack('>I', 13)
+        + b'IHDR'
+        + struct.pack('>II', 1200, 630)
+        + b'\x08\x02\x00\x00\x00'
+    )
+
+    html_dir = tmp_path / 'html'
+    returncode, out, err = _run_sphinx_build(
+        _sphinx_build_cmd(source_dir, html_dir, tmp_path / 'doctrees'),
+    )
+    assert returncode == 0, f'sphinx build failed with stdout:\n{out}\nstderr:\n{err}\n'
+
+    tags = meta_tags(html_dir / 'index.html')
+    assert tags.get('og:image') == 'https://docs.example.org/_static/banner.png'
+    assert tags.get('og:image:type') == 'image/png'
+    assert tags.get('og:image:width') == '1200'
+    assert tags.get('og:image:height') == '630'
+
+
+def test_fallback_image_resolves_a_relative_ogp_image_against_site_url(tmp_path: Path):
+    """A relative ``ogp_image`` is resolved against ``ogp_site_url``.
+
+    Matches ``sphinxext-opengraph``'s own resolution.
+    """
+    source_dir = _minimal_project(
+        tmp_path,
+        'No Images\n==========\n\nJust prose, no images at all on this page.\n',
+        conf_extra="ogp_image = '_static/banner.png'\nhtml_static_path = ['_static']\n",
+    )
+    static_dir = source_dir / '_static'
+    static_dir.mkdir()
+    (static_dir / 'banner.png').write_bytes(
+        b'\x89PNG\r\n\x1a\n'
+        + struct.pack('>I', 13)
+        + b'IHDR'
+        + struct.pack('>II', 400, 300)
+        + b'\x08\x02\x00\x00\x00'
+    )
+
+    html_dir = tmp_path / 'html'
+    returncode, out, err = _run_sphinx_build(
+        _sphinx_build_cmd(source_dir, html_dir, tmp_path / 'doctrees'),
+    )
+    assert returncode == 0, f'sphinx build failed with stdout:\n{out}\nstderr:\n{err}\n'
+
+    tags = meta_tags(html_dir / 'index.html')
+    assert tags.get('og:image:width') == '400'
+    assert tags.get('og:image:height') == '300'
+
+
+def test_fallback_image_metadata_skipped_when_ogp_use_first_image_is_set(tmp_path: Path):
+    """``ogp_use_first_image`` picks the page's own image instead of ``ogp_image``.
+
+    Enriching ``ogp_image`` here would describe an image the page doesn't
+    actually preview.
+    """
+    source_dir = _minimal_project(
+        tmp_path,
+        'No Images\n==========\n\nJust prose, no images at all on this page.\n',
+        conf_extra=(
+            "ogp_image = 'https://docs.example.org/_static/banner.png'\n"
+            'ogp_use_first_image = True\n'
+        ),
+    )
+    html_dir = tmp_path / 'html'
+    returncode, out, err = _run_sphinx_build(
+        _sphinx_build_cmd(source_dir, html_dir, tmp_path / 'doctrees'),
+    )
+    assert returncode == 0, f'sphinx build failed with stdout:\n{out}\nstderr:\n{err}\n'
+
+    tags = meta_tags(html_dir / 'index.html')
+    assert 'og:image:width' not in tags
+    assert 'og:image:height' not in tags
+    assert 'og:image:type' not in tags
+
+
 def test_pages_with_no_images_keep_the_site_wide_default(tmp_path: Path):
     """A page with no images at all (``some_autodocs.html``) keeps ``ogp_image``."""
     html_dir, returncode, out, err = _build_tinypages(tmp_path)
